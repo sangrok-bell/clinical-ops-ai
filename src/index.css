@@ -1,0 +1,175 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   HARMONIC — Bell Therapeutics DTx theme (light · calm · clinical trust).
+   Adopted from the company's implemented design system
+   (dw-poc-report/planning/DESIGN-SYSTEM.md). Principles:
+     - light-first, BORDERS not shadows (soft shadow only for floating elements)
+     - restrained color: navy #08264A anchor + lime ramp; grayscale-first
+     - never mix navy + lime in a gradient
+   Token NAMES are unchanged from the previous theme (Aurora) — only values, so
+   the whole component system + eval suite re-skins by swapping this file.
+   ============================================================================ */
+
+:root {
+  /* shadcn semantic vars */
+  --radius: 0.75rem; /* 12px */
+  --background: #fbfbfc; /* Medical White */
+  --foreground: #1c1c1a; /* Text Black */
+  --card: #ffffff;
+  --card-foreground: #1c1c1a;
+  --popover: #ffffff;
+  --popover-foreground: #1c1c1a;
+  --primary: #08264a; /* Connection navy — professional anchor */
+  --primary-foreground: #ffffff;
+  --secondary: #eeeef4; /* Neutral Gray */
+  --secondary-foreground: #1c1c1a;
+  --muted: #eeeef4;
+  --muted-foreground: #6b6b6b;
+  --accent: #c8e64a; /* Lime — CTA / energy */
+  --accent-foreground: #1c1c1a;
+  --destructive: #e05252;
+  --destructive-foreground: #ffffff;
+  --border: #eeeef4;
+  --input: #dddde4;
+  --ring: #08264a;
+}
+
+@theme inline {
+  /* shadcn aliases */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  /* ---- Harmonic surfaces (light) ---- */
+  --color-canvas: #fbfbfc; /* Medical White — page */
+  --color-surface: #ffffff; /* card */
+  --color-sidebar: #fbfbfc;
+  --color-elevated: #eeeef4; /* Neutral Gray — hover/active surface */
+
+  /* ---- text / icon ---- */
+  --color-ink: #1c1c1a; /* Text Black */
+  --color-dim: #6b6b6b; /* secondary text */
+  --color-icon: #9b9ba3; /* caption / inactive icon */
+  --color-onaccent: #1c1c1a; /* dark text on lime / yellow fills */
+
+  /* ---- semantic accents (restrained) ---- */
+  --color-brand: #08264a; /* Connection navy — professional anchor */
+  --color-positive: #c8e64a; /* Lime — CTA / energy / "used" */
+  --color-info: #4a6f9c; /* muted clinical blue */
+  --color-magenta: #f4a6b8; /* soft pink — unread/new accent */
+  --color-danger: #e05252;
+  --color-warning: #f59e0b;
+  --color-caution: #f6ff8f; /* Optic Yellow — rhythm/joy highlight */
+  --color-point: #f6ff8f; /* BI point color — flat, no gradient (per demo spec) */
+
+  /* ---- extended secondary / data-viz palette (DESIGN-SYSTEM.md) ---- */
+  --color-caption: #9b9ba3; /* labels, hints, timestamps */
+  --color-line: #dddde4; /* input / detail borders */
+  --color-muted-strong: #b8b8c2; /* heatmap "unused" emphasis */
+  --color-faint: #f4f4f8; /* heatmap "not-elapsed" / faint fill */
+  --color-success: #2e7d32; /* positive-change text */
+  --color-male: #5b9bd5; /* demographic */
+  --color-female: #f4a6b8; /* demographic */
+  --color-line-soft: #d4d4dc; /* grayscale ramp end (data-viz) */
+
+  /* ---- radii ---- */
+  --radius-card: 16px;
+  --radius-toast: 12px;
+  --radius-btn: 12px;
+  --radius-pill: 9999px;
+
+  /* ---- elevation: borders-first; soft shadow ONLY for floating elements ---- */
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.06);
+  --shadow-soft: 0 2px 8px rgba(0, 0, 0, 0.05);
+  --shadow-glow-green: 0 4px 16px rgba(0, 0, 0, 0.06);
+  --shadow-glow-blue: 0 4px 16px rgba(0, 0, 0, 0.06);
+  --shadow-glow-teal: 0 4px 16px rgba(0, 0, 0, 0.06);
+
+  /* ---- type / motion ---- */
+  --font-sans: "DM Sans", "Pretendard Variable", Pretendard, system-ui, sans-serif;
+  --font-display: "Funnel Display", "DM Sans", system-ui, sans-serif;
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ---- base ---- */
+* {
+  border-color: var(--border);
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans, system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ---- token-backed utilities ----
+   Gradient rule: lime only (#C8E64A → #7BAF1A), 135deg. Never mix navy + lime. */
+.bg-brand-gradient {
+  background-image: linear-gradient(135deg, #c8e64a 0%, #7baf1a 100%); /* CTA / active nav */
+}
+.bg-success-gradient {
+  background-image: linear-gradient(135deg, #c8e64a 0%, #7baf1a 100%);
+}
+.bg-info-gradient {
+  background-image: linear-gradient(135deg, #eef3f9 0%, #e3ecf6 100%);
+}
+.bg-logo-sphere {
+  background-image: linear-gradient(135deg, #f6ff8f 0%, #c8e64a 50%, #7baf1a 100%);
+}
+.glass {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-toast-in {
+  animation: toast-in 0.32s var(--ease-spring) both;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
