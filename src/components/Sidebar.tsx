@@ -61,7 +61,7 @@ export function Sidebar() {
       <div className="flex items-center gap-3 px-1 py-2">
         <div className="bg-logo-sphere size-11 shrink-0 rounded-full ring-2 ring-white/10" />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[15px] font-semibold text-ink">Clinical Ops AI</p>
+          <p className="truncate text-[15px] font-semibold text-ink">Clinical Gandalf</p>
           <p className="truncate text-xs text-dim">Design Tutorial</p>
         </div>
         <ChevronsUpDown className="size-5 text-icon" />

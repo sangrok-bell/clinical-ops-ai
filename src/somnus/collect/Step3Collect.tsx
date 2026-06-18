@@ -143,7 +143,7 @@ function PlatformInbox({
           <span className="relative inline-flex size-2 rounded-full bg-positive" />
         </span>
         <span className="text-sm font-semibold text-ink">
-          Clinical Ops AI · 데이터 수신
+          Clinical Gandalf · 데이터 수신
         </span>
         <span className="ml-auto text-xs text-dim">
           수신 {subs.length} · 검토 필요 {flagged}

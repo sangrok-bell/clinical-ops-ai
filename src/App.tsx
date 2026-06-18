@@ -11,7 +11,7 @@ export default function App() {
           <ShieldCheck className="size-4" />
         </span>
         <span className="font-bold text-ink" style={{ fontFamily: "var(--font-display)" }}>
-          Clinical Ops AI
+          Clinical Gandalf
         </span>
       </header>
       <SetupShell />
