@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Step1Protocol } from "./Step1Protocol";
 import { Step2Design } from "./Step2Design";
@@ -9,7 +9,7 @@ import { MonitoringStep } from "@/somnus/detect/MonitoringStep";
 import { Step5Review } from "@/somnus/review/Step5Review";
 import { Step6Lock } from "@/somnus/review/Step6Lock";
 import { T2_DATASET } from "@/somnus/data/t2";
-import { CONNECTED_STUDY, type StudyHandoff } from "@/somnus/engine/design";
+import { CONNECTED_STUDY, type StudyHandoff, type DesignResult } from "@/somnus/engine/design";
 import { SLEEP_CONFIG, type Config, type SleepRow, type Dataset } from "@/somnus/engine/validate";
 
 const STEP_NAMES = ["스터디 설계", "EDC·ePRO 설계", "데이터 수집", "모니터링", "데이터 리뷰", "데이터 마감"];
@@ -55,6 +55,7 @@ export function SetupShell() {
   const [config, setConfig] = useState<Config>(SLEEP_CONFIG);
   const [collected, setCollected] = useState<SleepRow[]>([]);
   const [queries, setQueries] = useState<Queries>({});
+  const [design, setDesign] = useState<DesignResult | null>(null); // ② design state, lifted so back/forward preserves it
 
   const upsertQuery = (q: Query) => setQueries((m) => ({ ...m, [q.key]: { ...m[q.key], ...q } }));
   const updateQuery = (key: string, patch: Partial<Query>) => setQueries((m) => (m[key] ? { ...m, [key]: { ...m[key], ...patch } } : m));
@@ -73,7 +74,29 @@ export function SetupShell() {
     setQueries({});
     setHandoff({ docs: [] });
     setConfig(SLEEP_CONFIG);
+    setDesign(null);
   };
+
+  // Browser back/forward ↔ step idx, via the History API (no router needed — keeps the
+  // single-idx shell, just makes the back/forward buttons walk the 6 steps).
+  const fromPop = useRef(false);
+  useEffect(() => {
+    history.replaceState({ idx: 0 }, "", "#1");
+    const onPop = (e: PopStateEvent) => {
+      fromPop.current = true;
+      setIdx(typeof e.state?.idx === "number" ? e.state.idx : 0);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  useEffect(() => {
+    if (fromPop.current) {
+      fromPop.current = false;
+      return;
+    }
+    if (history.state?.idx === idx) return;
+    history.pushState({ idx }, "", `#${idx + 1}`);
+  }, [idx]);
 
   // Live dataset = seed insomnia cohort (T2) + ③ collected assessments (+ LIVE_SUBJECT meta when any).
   const dataset = useMemo<Dataset>(
@@ -104,7 +127,7 @@ export function SetupShell() {
           />
         ) : idx === 1 ? (
           CONNECTED_STUDY.conforms(handoff.docAssessment) ? (
-            <Step2Design handoff={handoff} config={config} onConfigChange={setConfig} onNext={() => setIdx(2)} />
+            <Step2Design handoff={handoff} config={config} onConfigChange={setConfig} onNext={() => setIdx(2)} design={design} onDesignChange={setDesign} />
           ) : (
             <StudyMismatch assessment={handoff.docAssessment} onBack={() => setIdx(0)} />
           )

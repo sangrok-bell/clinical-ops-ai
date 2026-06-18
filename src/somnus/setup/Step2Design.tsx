@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import {
   Loader2,
   Check,
@@ -472,9 +472,26 @@ function Header({ compact, source }: { compact?: boolean; source?: "ai" | "seed"
 
 // ── main ───────────────────────────────────────────────────────────────────────
 
-export function Step2Design({ handoff, config, onConfigChange, onNext }: { handoff: StudyHandoff; config: Config; onConfigChange: (c: Config) => void; onNext: () => void }) {
-  const [result, setResult] = useState<DesignResult | null>(null);
-  const [stage, setStage] = useState<"deriving" | "review">("deriving");
+export function Step2Design({
+  handoff,
+  config,
+  onConfigChange,
+  onNext,
+  design,
+  onDesignChange,
+}: {
+  handoff: StudyHandoff;
+  config: Config;
+  onConfigChange: (c: Config) => void;
+  onNext: () => void;
+  design: DesignResult | null;
+  onDesignChange: Dispatch<SetStateAction<DesignResult | null>>;
+}) {
+  // ② design result is lifted into the shell so back/forward navigation preserves it
+  // (manual-added fields, AI-field edits) instead of re-deriving on every revisit.
+  const result = design;
+  const setResult = onDesignChange;
+  const [stage, setStage] = useState<"deriving" | "review">(design ? "review" : "deriving");
   const [tab, setTab] = useState<"schema" | "epro" | "rules" | "soa">("schema");
   const [edited, setEdited] = useState<Set<string>>(new Set());
   const [editedRules, setEditedRules] = useState<Set<string>>(new Set());
@@ -483,6 +500,10 @@ export function Step2Design({ handoff, config, onConfigChange, onNext }: { hando
   const [addingForm, setAddingForm] = useState<string | null>(null);
 
   useEffect(() => {
+    if (result) {
+      setStage("review"); // already derived (e.g. returned via back) → keep edits, don't re-derive
+      return;
+    }
     let alive = true;
     setStage("deriving");
     deriveDesign(handoff.docs ?? []).then((r) => {
@@ -493,6 +514,7 @@ export function Step2Design({ handoff, config, onConfigChange, onNext }: { hando
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handoff]);
 
   const fields = result?.fields ?? [];
