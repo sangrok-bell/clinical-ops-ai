@@ -11,10 +11,26 @@ import {
   Lock,
   RotateCcw,
   SlidersHorizontal,
+  Plus,
+  X,
+  AlertTriangle,
+  Watch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { deriveDesign, EPRO_FORM, type DesignResult, type DesignField, type DesignRule, type LayerTag, type RuleSev, type StudyHandoff } from "@/somnus/engine/design";
+import {
+  deriveDesign,
+  checkFieldScope,
+  EPRO_FORM,
+  type DesignResult,
+  type DesignField,
+  type DesignRule,
+  type LayerTag,
+  type RuleSev,
+  type StudyHandoff,
+  type ScopeVerdict,
+  type ScopeContext,
+} from "@/somnus/engine/design";
 import type { Config } from "@/somnus/engine/validate";
 
 // ── meta constants ───────────────────────────────────────────────────────────
@@ -78,13 +94,135 @@ function RuleChip({ r }: { r: DesignRule }) {
   );
 }
 
-function OriginBadge({ origin, kind }: { origin: "core" | "ai"; kind?: "rule" }) {
+function OriginBadge({ origin, kind }: { origin: "core" | "ai" | "manual"; kind?: "rule" }) {
   if (origin === "core") {
     return (
       <span className="shrink-0 rounded-pill bg-[#eef3f9] px-1.5 py-0.5 text-[9px] font-medium text-info">{kind === "rule" ? "결정적·코드" : "결정적"}</span>
     );
   }
+  if (origin === "manual") {
+    return <span className="shrink-0 rounded-pill bg-[#f3f7e0] px-1.5 py-0.5 text-[9px] font-medium text-[#4d6a0f]">수동 추가</span>;
+  }
   return <span className="shrink-0 rounded-pill bg-elevated px-1.5 py-0.5 text-[9px] font-medium text-dim">AI 도출</span>;
+}
+
+const SCOPE_STYLE: Record<ScopeVerdict["verdict"], { cls: string; label: (s: ScopeVerdict) => string }> = {
+  in_scope: { cls: "bg-[#f3f7e0] text-[#4d6a0f]", label: (s) => `근거 확인${s.maps_to ? " · " + s.maps_to : ""}` },
+  caution: { cls: "bg-[#fef6e7] text-warning", label: () => "근거 약함 — 확인 권장" },
+  out_of_scope: { cls: "bg-[#fdecec] text-danger", label: () => "프로토콜·SOP 범위 밖" },
+};
+
+function ScopeBadge({ s }: { s: ScopeVerdict }) {
+  const m = SCOPE_STYLE[s.verdict];
+  return <span className={cn("inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[9px] font-medium", m.cls)}>{m.label(s)}</span>;
+}
+
+// SOP continuous/daily collection (not visit-bound) — the always-on watch + daily ISI ePRO.
+const CONTINUOUS = [
+  { label: "ISI ePRO (매일)", cadence: "매일", detail: "환자 자가응답 — 제출시각·응답소요 기록", source: "프로토콜 §ePRO / SOP §상시수집", icon: Smartphone },
+  { label: "스마트워치 — 상시 생체신호", cadence: "상시(연속)", detail: "심박·SpO₂·활동, ~30분 간격 연속 수집", source: "기기 연동 / SOP §상시수집", icon: Watch },
+  { label: "스마트워치 — 일별 수면요약", cadence: "매일", detail: "수면시간·심박·HRV·SpO₂·착용시간", source: "기기 연동 / SOP §상시수집", icon: Watch },
+];
+
+// inline "+ 필드 추가" editor with AI scope guard (signal, never blocks — human decides).
+function AddFieldForm({ form, ctx, onAdd, onCancel }: { form: string; ctx: ScopeContext; onAdd: (f: DesignField) => void; onCancel: () => void }) {
+  const [variable, setVariable] = useState("");
+  const [label, setLabel] = useState("");
+  const [type, setType] = useState("정수");
+  const [range, setRange] = useState("");
+  const [required, setRequired] = useState(false);
+  const [endpoint, setEndpoint] = useState("");
+  const [source, setSource] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [scope, setScope] = useState<ScopeVerdict | null>(null);
+  const [ack, setAck] = useState(false);
+
+  const canSubmit = variable.trim().length > 0 && label.trim().length > 0;
+
+  const build = (s: ScopeVerdict): DesignField => ({
+    id: `manual-${Date.now()}`,
+    form,
+    variable: variable.trim(),
+    label: label.trim(),
+    type: type.trim() || "정수",
+    range: range.trim() || "—",
+    required,
+    source: source.trim() || "수동 추가",
+    endpoint: endpoint.trim() || "수동 지정",
+    origin: "manual",
+    rules: [],
+    scope: s,
+  });
+
+  const run = async () => {
+    setChecking(true);
+    const v = await checkFieldScope({ variable, label, type, range, endpoint }, ctx);
+    setChecking(false);
+    setScope(v);
+    if (v.verdict === "out_of_scope") return; // require ack via "그래도 추가"
+    onAdd(build(v));
+  };
+
+  const inputCls = "w-full rounded-lg border border-[#dddde4] bg-canvas px-2 py-1.5 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-brand";
+
+  return (
+    <div className="mx-4 mb-3 rounded-xl border border-[#dddde4] bg-canvas p-3">
+      <div className="flex items-center gap-2">
+        <Plus className="size-4 text-brand" />
+        <span className="text-sm font-semibold text-ink">{form}에 필드 추가</span>
+        <button onClick={onCancel} className="ml-auto text-icon hover:text-ink" aria-label="추가 취소">
+          <X className="size-4" />
+        </button>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <input className={inputCls} placeholder="변수명 (예: FBS)" value={variable} onChange={(e) => { setVariable(e.target.value); setScope(null); }} />
+        <input className={cn(inputCls, "col-span-2")} placeholder="라벨 (예: 공복혈당)" value={label} onChange={(e) => { setLabel(e.target.value); setScope(null); }} />
+        <input className={inputCls} placeholder="타입 (정수)" value={type} onChange={(e) => setType(e.target.value)} />
+        <input className={inputCls} placeholder="범위 (예: 0–200)" value={range} onChange={(e) => setRange(e.target.value)} />
+        <input className={inputCls} placeholder="평가변수/endpoint" value={endpoint} onChange={(e) => { setEndpoint(e.target.value); setScope(null); }} />
+        <input className={cn(inputCls, "col-span-2")} placeholder="출처 (예: 프로토콜 §6.2)" value={source} onChange={(e) => setSource(e.target.value)} />
+        <label className="flex items-center gap-1.5 text-xs text-dim">
+          <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} className="size-4 accent-[#08264A]" /> 필수
+        </label>
+      </div>
+
+      {scope && (
+        <div className="mt-2 flex items-center gap-2">
+          <ScopeBadge s={scope} />
+          <span className="text-[11px] text-dim">{scope.rationale}</span>
+        </div>
+      )}
+
+      {scope && scope.verdict !== "in_scope" && (
+        <div className={cn("mt-2 flex items-start gap-2 rounded-xl border p-2.5", scope.verdict === "out_of_scope" ? "border-danger/30 bg-[#fdecec]" : "border-warning/40 bg-[#fef6e7]")}>
+          <AlertTriangle className={cn("mt-0.5 size-4 shrink-0", scope.verdict === "out_of_scope" ? "text-danger" : "text-warning")} />
+          <div className="min-w-0 text-[11px] leading-relaxed text-dim">
+            {scope.verdict === "out_of_scope"
+              ? "이 항목은 승인된 프로토콜·SOP에서 근거를 찾지 못했습니다. 잘못 추가하는 것일 수 있어요."
+              : "이 항목은 근거가 약합니다 — 추가는 가능하나 프로토콜·SOP 근거를 확인하세요."}
+            {scope.suggested_source && <span className="mt-0.5 block text-icon">추천 출처: {scope.suggested_source}</span>}
+            {scope.verdict === "out_of_scope" && (
+              <label className="mt-1.5 flex items-start gap-1.5 text-ink">
+                <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="mt-0.5 size-3.5 accent-[#08264A]" />
+                범위 밖임을 검토했고 추가합니다 (감사추적 기록)
+              </label>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-3 flex items-center gap-2">
+        {scope?.verdict === "out_of_scope" ? (
+          <Button variant="brand" size="sm" disabled={!ack} onClick={() => onAdd(build(scope))}>그래도 추가</Button>
+        ) : (
+          <Button variant="brand" size="sm" disabled={!canSubmit || checking} onClick={run}>
+            {checking ? <><Loader2 className="size-3.5 animate-spin" /> 범위 확인 중…</> : "범위 확인 후 추가"}
+          </Button>
+        )}
+        <button onClick={onCancel} className="text-xs text-dim hover:text-ink">취소</button>
+      </div>
+    </div>
+  );
 }
 
 function BuildBadge({ live }: { live?: boolean }) {
@@ -125,6 +263,7 @@ function SchemaRow({
           <OriginBadge origin={f.origin} />
           {crossSource && <span className="rounded-pill bg-[#fdecec] px-1.5 py-0.5 text-[9px] font-medium text-danger">↔ 교차소스</span>}
           {edited && <span className="rounded-pill bg-[#f3f7e0] px-1.5 py-0.5 text-[9px] font-medium text-[#4d6a0f]">수정됨</span>}
+          {f.scope && <ScopeBadge s={f.scope} />}
         </div>
         {editable && editingLabel ? (
           <input
@@ -241,7 +380,7 @@ function RuleRow({
   r: DesignRule;
   field: string;
   source: string;
-  origin: "core" | "ai";
+  origin: "core" | "ai" | "manual";
   editable: boolean;
   edited: boolean;
   onEdit: (desc: string) => void;
@@ -341,6 +480,7 @@ export function Step2Design({ handoff, config, onConfigChange, onNext }: { hando
   const [editedRules, setEditedRules] = useState<Set<string>>(new Set());
   const [removed, setRemoved] = useState<DesignField[]>([]);
   const [ack, setAck] = useState(false);
+  const [addingForm, setAddingForm] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -364,6 +504,9 @@ export function Step2Design({ handoff, config, onConfigChange, onNext }: { hando
   const l3plus = allRules.filter((r) => !LAYER_META[r.layer].std).length;
   const coreRuleCount = fields.filter((f) => f.origin === "core").reduce((n, f) => n + f.rules.length, 0);
   const aiRuleCount = ruleCount - coreRuleCount;
+  const ctx: ScopeContext = { summary: handoff.summary, docAssessment: handoff.docAssessment };
+  const manualFields = fields.filter((f) => f.origin === "manual");
+  const manualOutOfScope = manualFields.filter((f) => f.scope?.verdict === "out_of_scope");
 
   // ── handlers (mutate AI-derived only; core is owned by validate.ts → read-only) ──
 
@@ -376,10 +519,15 @@ export function Step2Design({ handoff, config, onConfigChange, onNext }: { hando
     setResult((prev) => {
       if (!prev) return prev;
       const f = prev.fields.find((x) => x.id === id);
-      if (!f || f.origin !== "ai") return prev; // core → no-op
-      setRemoved((rm) => (rm.some((x) => x.id === id) ? rm : [...rm, f]));
+      if (!f || f.origin === "core") return prev; // core → no-op
+      if (f.origin === "ai") setRemoved((rm) => (rm.some((x) => x.id === id) ? rm : [...rm, f])); // ai → restorable; manual → just remove
       return { ...prev, fields: prev.fields.filter((x) => x.id !== id) };
     });
+  };
+
+  const addField = (f: DesignField) => {
+    setResult((prev) => (prev ? { ...prev, fields: [...prev.fields, f] } : prev));
+    setAddingForm(null);
   };
 
   const restoreField = (id: string) => {
@@ -510,6 +658,22 @@ export function Step2Design({ handoff, config, onConfigChange, onNext }: { hando
               </div>
               {!fieldMapping.pass && <p className="pl-6 text-[11px] leading-relaxed text-icon">{fieldMapping.note}</p>}
             </div>
+            {/* advisory (manual field scope guard) */}
+            {manualFields.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-start gap-2 text-xs">
+                  <span className={cn("mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full text-[10px]", manualOutOfScope.length === 0 ? "bg-positive text-onaccent" : "bg-warning text-white")}>
+                    {manualOutOfScope.length === 0 ? <Check className="size-2.5" /> : "!"}
+                  </span>
+                  <span className="text-dim">
+                    수동 추가 필드 범위 확인 <span className="text-icon">(자문)</span>
+                  </span>
+                </div>
+                <p className="pl-6 text-[11px] leading-relaxed text-icon">
+                  수동 {manualFields.length}건{manualOutOfScope.length > 0 ? ` · 범위 밖 ${manualOutOfScope.length}건(검토 후 추가됨)` : " · 전부 범위 내/주의"}
+                </p>
+              </div>
+            )}
           </div>
           <div className="mt-3 border-t border-[#f1f1f5] pt-3 text-[11px] text-icon">
             교차소스·중앙검증(L3·L5·L6) {l3plus}건 — 표준 EDC가 못 잡는 영역
@@ -543,9 +707,15 @@ export function Step2Design({ handoff, config, onConfigChange, onNext }: { hando
                   <div className="flex flex-wrap items-center gap-2 border-b border-[#eeeef4] bg-canvas px-4 py-2.5">
                     {form === EPRO_FORM ? <Smartphone className="size-4 text-brand" /> : <Database className="size-4 text-brand" />}
                     <span className="text-sm font-semibold text-ink">{form}</span>
-                    <span className="ml-auto">
+                    <div className="ml-auto flex items-center gap-2">
+                      <button
+                        onClick={() => setAddingForm(addingForm === form ? null : form)}
+                        className="inline-flex items-center gap-1 rounded-pill border border-[#dddde4] bg-surface px-2 py-1 text-[11px] font-medium text-brand hover:bg-elevated focus-visible:ring-2 focus-visible:ring-brand"
+                      >
+                        <Plus className="size-3.5" /> 필드 추가
+                      </button>
                       <BuildBadge live={form === EPRO_FORM} />
-                    </span>
+                    </div>
                   </div>
                   <div className="overflow-x-auto px-4 pb-2">
                     <table className="w-full text-left">
@@ -566,7 +736,7 @@ export function Step2Design({ handoff, config, onConfigChange, onNext }: { hando
                             key={f.id}
                             f={f}
                             edited={edited.has(f.id)}
-                            editable={f.origin === "ai"}
+                            editable={f.origin !== "core"}
                             onEdit={(p) => updateField(f.id, p)}
                             onRemove={() => removeField(f.id)}
                           />
@@ -574,6 +744,7 @@ export function Step2Design({ handoff, config, onConfigChange, onNext }: { hando
                       </tbody>
                     </table>
                   </div>
+                  {addingForm === form && <AddFieldForm form={form} ctx={ctx} onAdd={addField} onCancel={() => setAddingForm(null)} />}
                 </div>
               );
             })}
@@ -735,7 +906,36 @@ export function Step2Design({ handoff, config, onConfigChange, onNext }: { hando
             const rows = [...new Set(visits.flatMap((v) => v.assessments))];
             const isPrimary = (label: string) => /1차|week\s*4|4주/i.test(label);
             return (
-              <div className="overflow-hidden rounded-2xl border border-[#eeeef4] bg-surface">
+              <div className="flex flex-col gap-4">
+                {/* 상시·매일 수집 (SOP — 방문 비의존): 매일 ISI ePRO + 스마트워치 상시/일별 */}
+                <div className="overflow-hidden rounded-2xl border border-[#eeeef4] bg-surface">
+                  <div className="flex flex-wrap items-center gap-2 border-b border-[#eeeef4] bg-canvas px-4 py-2.5">
+                    <Watch className="size-4 text-brand" />
+                    <span className="text-sm font-semibold text-ink">상시·매일 수집 (방문 비의존)</span>
+                    <span className="rounded-pill bg-[#eef3f9] px-2 py-0.5 text-[10px] font-medium text-info">SOP §상시수집</span>
+                  </div>
+                  <div className="divide-y divide-[#f1f1f5]">
+                    {CONTINUOUS.map((c) => (
+                      <div key={c.label} className="flex items-start gap-3 px-4 py-3">
+                        <c.icon className="mt-0.5 size-4 shrink-0 text-icon" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-semibold text-ink">{c.label}</span>
+                            <span className="rounded-pill bg-[#f3f7e0] px-2 py-0.5 text-[10px] font-medium text-[#4d6a0f]">{c.cadence}</span>
+                          </div>
+                          <p className="mt-0.5 text-[11px] leading-relaxed text-dim">{c.detail}</p>
+                        </div>
+                        <span className="hidden shrink-0 text-[11px] text-icon sm:block">{c.source}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="border-t border-[#f1f1f5] px-4 py-2.5 text-[11px] leading-relaxed text-icon">
+                    이 항목들은 특정 방문이 아니라 <b className="text-dim">전 구간 연속/매일</b> 수집됩니다 — 아래 방문 SoA와 별개로 운영됩니다.
+                  </div>
+                </div>
+
+                {/* 방문 기반 평가 일정 */}
+                <div className="overflow-hidden rounded-2xl border border-[#eeeef4] bg-surface">
                 <div className="flex flex-wrap items-center gap-2 border-b border-[#eeeef4] bg-canvas px-4 py-2.5">
                   <CalendarDays className="size-4 text-brand" />
                   <span className="text-sm font-semibold text-ink">평가 일정 (Schedule of Assessments)</span>
@@ -781,6 +981,7 @@ export function Step2Design({ handoff, config, onConfigChange, onNext }: { hando
                 )}
                 <div className="border-t border-[#f1f1f5] px-4 py-2.5 text-[11px] text-icon">
                   <span className="text-positive">●</span> 실시 · <span className="text-brand">●</span> 1차 평가 시점 — 프로토콜의 평가 일정에서 AI가 도출, 사람이 확정합니다.
+                </div>
                 </div>
               </div>
             );

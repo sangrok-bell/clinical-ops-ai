@@ -11,6 +11,7 @@ function clinicalApi(): Plugin {
     "/api/analyze-protocol": () => import("./server/analyze.mjs"),
     "/api/reevaluate": () => import("./server/reevaluate.mjs"),
     "/api/derive-design": () => import("./server/design.mjs"),
+    "/api/check-field-scope": () => import("./server/scope.mjs"),
   };
   return {
     name: "clinical-api",

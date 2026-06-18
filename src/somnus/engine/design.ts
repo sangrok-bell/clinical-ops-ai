@@ -15,6 +15,16 @@ export type LayerTag = "L1" | "L2" | "L3" | "L5" | "L6" | "안전";
 export type RuleSev = "crit" | "warn" | "info";
 export type DesignRule = { layer: LayerTag; sev: RuleSev; desc: string };
 
+// AI scope-guard verdict for a user-added field (signal, never a hard block — human decides).
+export type ScopeVerdict = {
+  verdict: "in_scope" | "caution" | "out_of_scope";
+  confidence: "high" | "low";
+  rationale: string;
+  maps_to?: string;
+  suggested_source?: string;
+};
+export type ScopeContext = { summary?: string; docAssessment?: DocAssessment };
+
 export type DesignField = {
   id: string;
   form: string;
@@ -25,8 +35,9 @@ export type DesignField = {
   required: boolean;
   source: string;
   endpoint: string; // protocol endpoint this field implements (traceability)
-  origin: "core" | "ai";
+  origin: "core" | "ai" | "manual"; // core=deterministic (read-only), ai=derived, manual=user-added
   rules: DesignRule[];
+  scope?: ScopeVerdict; // present on manual fields after the scope guard runs
 };
 
 export type DesignVisit = { label: string; assessments: string[] };
@@ -284,5 +295,43 @@ export async function deriveDesign(docs: DocInput[]): Promise<DesignResult> {
     return mergeVisit(data);
   } catch {
     return SEED_RESULT;
+  }
+}
+
+// ── AI scope guard (Feature 21) ───────────────────────────────────────────────
+// Judges whether a user-added CRF field falls within the connected study's collection
+// scope. AI = warning/guide only (never blocks); deterministic fallback works keyless.
+
+const SCOPE_TOKENS = ["isi", "ess", "phq", "gad", "수면", "sleep", "watch", "워치", "tst", "waso", "sol", "각성", "졸림", "우울", "불안", "심박", "hrv", "spo2", "코골이", "ahi", "호흡", "불면"];
+
+function fallbackScope(field: { variable?: string; label?: string; endpoint?: string }, ctx?: ScopeContext): ScopeVerdict {
+  const hay = `${field.variable ?? ""} ${field.label ?? ""} ${field.endpoint ?? ""}`.toLowerCase();
+  const measures = [...CONNECTED_STUDY.measures, ...(ctx?.docAssessment?.expected_measures ?? [])].map((m) => m.toLowerCase());
+  const hit = SCOPE_TOKENS.some((t) => hay.includes(t)) || measures.some((m) => m.length >= 2 && hay.includes(m.slice(0, 3)));
+  return hit
+    ? { verdict: "in_scope", confidence: "low", rationale: "연결 스터디 측정치(불면·수면·기분 척도·스마트워치)와 용어가 겹칩니다.", maps_to: `${CONNECTED_STUDY.label} 수집 항목` }
+    : { verdict: "caution", confidence: "low", rationale: "연결 스터디 측정치와 직접 겹치는 근거를 찾지 못했습니다 — 프로토콜·SOP 근거를 확인하세요." };
+}
+
+export async function checkFieldScope(
+  field: { variable: string; label: string; type?: string; range?: string; endpoint?: string; rules?: DesignRule[] },
+  ctx?: ScopeContext,
+): Promise<ScopeVerdict> {
+  try {
+    const r = await fetch("/api/check-field-scope", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        field,
+        context: ctx ?? {},
+        study: { label: CONNECTED_STUDY.label, domain: CONNECTED_STUDY.domain, measures: CONNECTED_STUDY.measures },
+      }),
+    });
+    if (!r.ok) return fallbackScope(field, ctx);
+    const data = await r.json();
+    if (!data || !data.verdict) return fallbackScope(field, ctx);
+    return data as ScopeVerdict;
+  } catch {
+    return fallbackScope(field, ctx);
   }
 }
