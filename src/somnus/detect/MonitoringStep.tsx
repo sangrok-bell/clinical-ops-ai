@@ -1,20 +1,22 @@
 import { useState } from "react";
-import { Radar, ScanSearch, ArrowRight } from "lucide-react";
+import { Radar, ScanSearch, Brain, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { CroDetection } from "./CroDetection";
 import { CohortScan } from "./CohortScan";
+import { ContextAnomalyView } from "./ContextAnomalyView";
 
 // Step ④ 모니터링 — after the protocol/SOP review (①) and ePRO·EDC design (②) are
-// locked, this is the monitoring phase: real-time per-patient detection (CRO) and
-// the cohort-wide batch scan. Two sub-views, one step in the lifecycle.
+// locked, this is the monitoring phase: real-time per-patient detection (CRO), the
+// cohort-wide batch scan, and context-conditional personalized anomaly detection (agent).
 const VIEWS = [
   { k: "live" as const, label: "실시간 검출 (환자)", icon: Radar },
   { k: "cohort" as const, label: "전수 검증 (코호트)", icon: ScanSearch },
+  { k: "context" as const, label: "맥락 이상 (개인화)", icon: Brain },
 ];
 
 export function MonitoringStep({ onNext }: { onNext: () => void }) {
-  const [view, setView] = useState<"live" | "cohort">("live");
+  const [view, setView] = useState<"live" | "cohort" | "context">("live");
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-center gap-1 self-start rounded-pill border border-[#eeeef4] bg-surface p-0.5">
@@ -32,7 +34,7 @@ export function MonitoringStep({ onNext }: { onNext: () => void }) {
         ))}
       </div>
 
-      {view === "live" ? <CroDetection /> : <CohortScan />}
+      {view === "live" ? <CroDetection /> : view === "cohort" ? <CohortScan /> : <ContextAnomalyView />}
 
       {onNext && (
         <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-elevated p-3">

@@ -12,6 +12,7 @@ function clinicalApi(): Plugin {
     "/api/reevaluate": () => import("./server/reevaluate.mjs"),
     "/api/derive-design": () => import("./server/design.mjs"),
     "/api/check-field-scope": () => import("./server/scope.mjs"),
+    "/api/context-anomaly": () => import("./server/context-anomaly.mjs"),
   };
   return {
     name: "clinical-api",
