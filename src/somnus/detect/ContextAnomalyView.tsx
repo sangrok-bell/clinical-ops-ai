@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Brain, TrendingUp, TrendingDown, ShieldCheck, Sparkles, Gauge } from "lucide-react";
+import { Loader2, Brain, TrendingUp, TrendingDown, ShieldCheck, Sparkles, Gauge, Wrench, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { studyDb } from "@/somnus/data/studyDb";
 import { scanContextAnomalies, contextRecall, type ContextAnomaly } from "@/somnus/engine/contextCheck";
 
-type Verdict = { verdict: "context_anomaly" | "explainable"; confidence: "high" | "low"; rationale: string; source?: string };
+type TraceStep = { tool: string; summary: string };
+type Critic = { refuted: boolean; note: string };
+type Verdict = {
+  verdict: "context_anomaly" | "explainable";
+  confidence: "high" | "low";
+  rationale: string;
+  source?: string;
+  trace?: TraceStep[];
+  critic?: Critic;
+};
 const famOfSignal = (s: string) => (s.includes("입면") ? "sol" : s.includes("ISI") ? "isi" : s.includes("심박") ? "hr" : "?");
 const ckey = (c: ContextAnomaly) => `${c.patient_id}:${c.fam}:${c.date}`;
 
@@ -25,19 +34,33 @@ export function ContextAnomalyView() {
   const [verdicts, setVerdicts] = useState<Record<string, Verdict | "loading">>({});
   const [batchRunning, setBatchRunning] = useState(false);
 
-  // fetch one verdict; updates the shared verdicts map (so per-row badges reflect it)
-  const judgeOne = async (c: ContextAnomaly) => {
+  // fetch one verdict; updates the shared verdicts map (so per-row badges reflect it).
+  // mode "light" = fast single-call (batch); mode "agent" = deep agent with patient slice + tool-use trace.
+  const judgeOne = async (c: ContextAnomaly, mode: "light" | "agent" = "light") => {
     const k = ckey(c);
     setVerdicts((v) => ({ ...v, [k]: "loading" }));
     try {
-      const r = await fetch("/api/context-anomaly", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ candidate: c }) });
+      const body =
+        mode === "agent"
+          ? {
+              mode: "agent",
+              candidate: c,
+              patient: {
+                diary: studyDb.diary(c.patient_id),
+                isi: studyDb.isiEpro(c.patient_id),
+                watch: studyDb.watchDaily(c.patient_id),
+              },
+            }
+          : { candidate: c };
+      const r = await fetch("/api/context-anomaly", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const data = (await r.json()) as Verdict;
       setVerdicts((v) => ({ ...v, [k]: data }));
     } catch {
       setVerdicts((v) => ({ ...v, [k]: { verdict: "context_anomaly", confidence: "low", rationale: `${c.msg} (호출 실패 — 사람 검토)` } }));
     }
   };
-  const judge = (c: ContextAnomaly) => void judgeOne(c);
+  // per-candidate button → deep agent (shows tool-use trace)
+  const judge = (c: ContextAnomaly) => void judgeOne(c, "agent");
 
   // batch judge the displayed candidates with a tiny bounded-concurrency pool (≤5 in flight)
   const judgeAll = async (list: ContextAnomaly[]) => {
@@ -49,7 +72,7 @@ export function ContextAnomalyView() {
       const worker = async () => {
         while (next < list.length) {
           const c = list[next++];
-          await judgeOne(c);
+          await judgeOne(c, "light"); // batch stays fast: light single-call (no agent/patient)
         }
       };
       await Promise.all(Array.from({ length: Math.min(LIMIT, list.length) }, () => worker()));
@@ -201,6 +224,36 @@ export function ContextAnomalyView() {
                   </div>
                 </div>
                 {v && v !== "loading" && <p className="rounded-lg bg-elevated px-2.5 py-1.5 text-[11px] leading-relaxed text-dim">{v.rationale}</p>}
+                {v && v !== "loading" && ((v.trace && v.trace.length > 0) || v.critic) && (
+                  <details className="rounded-lg border border-[#eeeef4] bg-canvas px-2.5 py-1.5">
+                    <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[10px] font-medium text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
+                      <Wrench className="size-3 text-icon" /> 에이전트 추론
+                      {v.trace && v.trace.length > 0 && (
+                        <span className="rounded-pill bg-elevated px-1.5 py-px text-[9px] tabular-nums text-icon">{v.trace.length} 단계</span>
+                      )}
+                    </summary>
+                    {v.trace && v.trace.length > 0 && (
+                      <ol className="mt-2 flex flex-col gap-1.5">
+                        {v.trace.map((t, i) => (
+                          <li key={i} className="flex gap-2 text-[10px] leading-relaxed">
+                            <span className="mt-px inline-flex size-4 shrink-0 items-center justify-center rounded-pill bg-elevated text-[9px] font-semibold tabular-nums text-dim">{i + 1}</span>
+                            <span className="min-w-0">
+                              <span className="font-mono font-semibold text-ink">{t.tool}</span>
+                              <span className="text-icon"> · </span>
+                              <span className="text-dim">{t.summary}</span>
+                            </span>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                    {v.critic && (
+                      <div className={cn("mt-2 flex items-start gap-1.5 rounded-lg px-2 py-1.5 text-[10px] leading-relaxed", v.critic.refuted ? "bg-[#fdecec] text-danger" : "bg-[#f3f7e0] text-[#4d6a0f]")}>
+                        <AlertTriangle className="mt-px size-3 shrink-0" />
+                        <span><b>비평자{v.critic.refuted ? " · 반박" : " · 지지"}:</b> {v.critic.note}</span>
+                      </div>
+                    )}
+                  </details>
+                )}
               </div>
             );
           })}
