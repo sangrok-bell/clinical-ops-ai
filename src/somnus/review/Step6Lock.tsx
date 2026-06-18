@@ -7,6 +7,22 @@ import type { Queries } from "@/somnus/setup/SetupShell";
 
 const keyOf = findingKey;
 
+// Detection taxonomy — group the unresolved data queries into the 3 kinds of detection.
+type DetCat = "personal_single" | "personal_multi" | "rule_stat";
+const CHANNEL_CAT: Record<string, DetCat> = {
+  variance_anomaly: "personal_single", // within-patient flatline (one metric, vs the patient's own baseline)
+  triangulation: "personal_multi", // cross-source / multi-indicator (self-report ISI ↔ objective watch)
+  range: "rule_stat",
+  scale_consistency: "rule_stat",
+  timestamp_forensics: "rule_stat",
+};
+const catOf = (channel: string): DetCat => CHANNEL_CAT[channel] ?? "rule_stat";
+const CAT_META: { key: DetCat; title: string; desc: string }[] = [
+  { key: "personal_single", title: "① 맥락 조건부 개인화 이상탐지 · 단일지표", desc: "전역 범위는 통과하나, 환자 본인 평소 대비 이상 (예: ISI 무변동/평탄)" },
+  { key: "personal_multi", title: "② 맥락 조건부 개인화 이상탐지 · 다중조건", desc: "여러 소스·조건을 함께 확인 (예: 자가보고 ISI ↔ 객관 스마트워치 수면 불일치)" },
+  { key: "rule_stat", title: "③ 규칙·통계 기본 오기입/오류 탐지", desc: "범위·내적 일관성·백필링 등 규칙 기반 + 통계적 이상치 (표준 EDC 영역)" },
+];
+
 export function Step6Lock({ dataset, config, queries, onResolve, onRestart }: { dataset: Dataset; config: Config; queries: Queries; onResolve: (key: string, reason: string) => void; onRestart: () => void }) {
   const result = useMemo(() => analyzeBulk(dataset, config), [dataset, config]);
   const [locked, setLocked] = useState(false);
@@ -75,19 +91,36 @@ export function Step6Lock({ dataset, config, queries, onResolve, onRestart }: { 
             <span className="text-sm font-semibold text-ink">미종결 데이터 쿼리 {openData.length}건</span>
             <button onClick={() => openData.forEach((f) => onResolve(keyOf(f), reason[keyOf(f)]?.trim() || "DM 검토 후 원자료와 일치 확인"))} className="ml-auto text-xs font-medium text-brand hover:underline">전체 종결 (사유 자동기록)</button>
           </div>
-          <div className="divide-y divide-[#f1f1f5]">
-            {openData.map((f) => { const k = keyOf(f); return (
-              <div key={k} className="flex flex-col gap-2 px-5 py-3">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs text-ink">{f.subject}</span>
-                  <span className="text-[11px] text-dim">{f.layer} · {f.channel}</span>
+          <div className="flex flex-col">
+            {CAT_META.map((cat) => {
+              const items = openData.filter((f) => catOf(f.channel) === cat.key);
+              if (items.length === 0) return null;
+              return (
+                <div key={cat.key} className="border-b border-[#f1f1f5] last:border-b-0">
+                  <div className="bg-canvas px-5 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-ink">{cat.title}</span>
+                      <span className="ml-auto text-[11px] text-icon">{items.length}건</span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-dim">{cat.desc}</p>
+                  </div>
+                  <div className="divide-y divide-[#f1f1f5]">
+                    {items.map((f) => { const k = keyOf(f); return (
+                      <div key={k} className="flex flex-col gap-2 px-5 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs text-ink">{f.subject}</span>
+                          <span className="text-[11px] text-dim">{f.layer} · {f.channel}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input value={reason[k] ?? ""} onChange={(e) => setReason((s) => ({ ...s, [k]: e.target.value }))} placeholder="종결 사유 (예: 사이트 원자료와 대조해 정정·확인)" className="min-w-0 flex-1 rounded-lg border border-[#dddde4] bg-canvas px-2.5 py-1.5 text-xs text-ink outline-none focus-visible:ring-2 focus-visible:ring-brand" />
+                          <Button size="sm" variant="outline" onClick={() => onResolve(k, reason[k]?.trim() || "DM 검토 후 원자료와 일치 확인")}>종결</Button>
+                        </div>
+                      </div>
+                    ); })}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <input value={reason[k] ?? ""} onChange={(e) => setReason((s) => ({ ...s, [k]: e.target.value }))} placeholder="종결 사유 (예: 사이트 원자료와 대조해 정정·확인)" className="min-w-0 flex-1 rounded-lg border border-[#dddde4] bg-canvas px-2.5 py-1.5 text-xs text-ink outline-none focus-visible:ring-2 focus-visible:ring-brand" />
-                  <Button size="sm" variant="outline" onClick={() => onResolve(k, reason[k]?.trim() || "DM 검토 후 원자료와 일치 확인")}>종결</Button>
-                </div>
-              </div>
-            ); })}
+              );
+            })}
           </div>
         </div>
       )}
