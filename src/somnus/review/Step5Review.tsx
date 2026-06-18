@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ScanLine,
   Sparkles,
@@ -10,6 +10,8 @@ import {
   Pencil,
   Trash2,
   Plus,
+  Database,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -23,6 +25,11 @@ import {
   type Dataset,
 } from "@/somnus/engine/validate";
 import type { Query, Queries } from "@/somnus/setup/SetupShell";
+import { studyDb } from "@/somnus/data/studyDb";
+import {
+  scanContextAnomalies,
+  type ContextAnomaly,
+} from "@/somnus/engine/contextCheck";
 
 const layerStyle: Record<ValLayer, { text: string; bg: string; name: string }> =
   {
@@ -326,6 +333,162 @@ function ManualQueries({
   );
 }
 
+const ctxKey = (c: ContextAnomaly) => `ctx:${c.patient_id}:${c.fam}:${c.date}`;
+
+function ContextAnomalyItem({
+  c,
+  query,
+  onIssue,
+}: {
+  c: ContextAnomaly;
+  query?: Query;
+  onIssue: () => void;
+}) {
+  const resolved = query?.status === "resolved";
+  return (
+    <div className="rounded-xl border border-[#eeeef4] bg-surface p-3 [animation-fill-mode:both] animate-[fadeIn_260ms_ease-out]">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="font-mono text-xs font-semibold text-ink">
+          {c.patient_id}
+        </span>
+        <span className="rounded-pill bg-[#fef6e7] px-1.5 py-0.5 text-[10px] font-medium text-warning">
+          {c.signal}
+        </span>
+        <span className="rounded-pill bg-[#eef3f9] px-1.5 py-0.5 text-[9px] font-medium text-info">
+          맥락 조건부
+        </span>
+        <span className="text-[10px] text-icon">{c.date}</span>
+        <span className="ml-auto font-mono text-[11px] font-semibold text-warning">
+          z {c.z > 0 ? "+" : ""}
+          {c.z}
+        </span>
+      </div>
+      <p className="mt-1.5 text-sm leading-relaxed text-ink">{c.msg}</p>
+      <p className="mt-0.5 text-[11px] text-icon">
+        측정값: {c.value}
+        {c.unit && ` ${c.unit}`} · {c.baseline}
+      </p>
+      {query && (
+        <div className="mt-2 rounded-lg border border-[#eeeef4] bg-canvas p-2">
+          <div className="flex items-center gap-1.5">
+            <FileSearch className="size-3 text-brand" />
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-dim">
+              발행 쿼리
+            </span>
+            <span
+              className={cn(
+                "ml-auto inline-flex items-center gap-1 text-[10px] font-medium",
+                resolved ? "text-[#4d6a0f]" : "text-warning",
+              )}
+            >
+              {resolved ? (
+                <>
+                  <Check className="size-3" /> 종결됨
+                </>
+              ) : (
+                "발행됨"
+              )}
+            </span>
+          </div>
+          <p className="mt-1 text-[12px] leading-relaxed text-ink">
+            {query.text}
+          </p>
+          {resolved && query.reason && (
+            <p className="mt-1 text-[11px] text-icon">
+              종결 사유: {query.reason}
+            </p>
+          )}
+        </div>
+      )}
+      {!query && (
+        <div className="mt-2 flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="ml-auto"
+            onClick={onIssue}
+          >
+            쿼리 발행
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContextAnomalyQueue({
+  ctxAnoms,
+  ctxReady,
+  queries,
+  onIssue,
+}: {
+  ctxAnoms: ContextAnomaly[];
+  ctxReady: boolean;
+  queries: Queries;
+  onIssue: (q: Query) => void;
+}) {
+  if (ctxAnoms.length === 0) return null;
+  const issued = ctxAnoms.filter((c) => queries[ctxKey(c)]).length;
+  return (
+    <div className="rounded-2xl border border-[#eeeef4] bg-surface p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Database className="size-4 text-info" />
+        <span className="text-sm font-semibold text-ink">
+          맥락 이상 (개인화 · 실데이터 150명)
+        </span>
+        <span className="rounded-pill bg-[#eef3f9] px-2 py-0.5 text-[10px] font-medium text-info">
+          실데이터(150명) 맥락 이상
+        </span>
+        <span className="ml-auto text-xs text-dim">
+          발행 {issued}/{ctxAnoms.length}
+        </span>
+      </div>
+      <p className="mt-1 text-[11px] leading-relaxed text-icon">
+        전역 범위·단순 통계는 통과하지만 본인 맥락(음주·카페인·운동·스트레스)·추세
+        대비 이상인 신호. 결정적 후보 필터가 고리콜로 추리고, 처분은 사람.
+      </p>
+      <p className="mt-1 flex items-start gap-1.5 text-[11px] leading-relaxed text-dim">
+        <Activity className="mt-0.5 size-3 shrink-0 text-info" />
+        <span>
+          데이터 이음새: 라우팅 큐(확정·SDV·안전) = <b className="text-ink">
+            시드 코호트
+          </b>{" "}
+          · 맥락 이상 = <b className="text-ink">실데이터 150명</b> (study DB,
+          |z| 상위 {ctxAnoms.length}건).
+        </span>
+      </p>
+      <div className="mt-3 flex flex-col gap-2">
+        {!ctxReady ? (
+          <p className="flex items-center gap-1.5 rounded-xl border border-dashed border-[#eeeef4] px-3 py-4 text-center text-[11px] text-icon">
+            <Loader2 className="size-3 animate-spin" /> 실데이터(150명) 적재 중…
+          </p>
+        ) : (
+          ctxAnoms.map((c) => {
+            const key = ctxKey(c);
+            return (
+              <ContextAnomalyItem
+                key={key}
+                c={c}
+                query={queries[key]}
+                onIssue={() =>
+                  onIssue({
+                    key,
+                    text: c.msg,
+                    status: "issued",
+                    origin: "auto",
+                    subject: c.patient_id,
+                    ec: c.signal,
+                  })
+                }
+              />
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
 const QUEUES: {
   route: Route;
   title: string;
@@ -378,6 +541,19 @@ export function Step5Review({
   const [ran, setRan] = useState(false);
   const result = useMemo(() => analyzeBulk(dataset, config), [dataset, config]);
   const s = result.summary;
+
+  // Real study DB (150명) — context-conditional anomalies, separate from the
+  // seed-cohort route queues. Loaded async; top 10 by |z|.
+  const [ctxReady, setCtxReady] = useState(false);
+  useEffect(() => {
+    studyDb.ready
+      .then(() => setCtxReady(true))
+      .catch(() => setCtxReady(true));
+  }, []);
+  const ctxAnoms = useMemo(
+    () => (ctxReady ? scanContextAnomalies(studyDb).slice(0, 10) : []),
+    [ctxReady],
+  );
 
   const queryable = result.records.filter((r) => r.route !== "통과");
   const issued = queryable.filter((r) => queries[keyOf(r)]).length;
@@ -487,6 +663,13 @@ export function Step5Review({
           );
         })}
       </div>
+
+      <ContextAnomalyQueue
+        ctxAnoms={ctxAnoms}
+        ctxReady={ctxReady}
+        queries={queries}
+        onIssue={onIssue}
+      />
 
       <ManualQueries
         queries={queries}

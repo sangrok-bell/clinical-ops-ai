@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Brain, TrendingUp, TrendingDown, ShieldCheck, Sparkles } from "lucide-react";
+import { Loader2, Brain, TrendingUp, TrendingDown, ShieldCheck, Sparkles, Gauge } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { studyDb } from "@/somnus/data/studyDb";
@@ -23,7 +23,10 @@ export function ContextAnomalyView() {
   }, [ready]);
 
   const [verdicts, setVerdicts] = useState<Record<string, Verdict | "loading">>({});
-  const judge = async (c: ContextAnomaly) => {
+  const [batchRunning, setBatchRunning] = useState(false);
+
+  // fetch one verdict; updates the shared verdicts map (so per-row badges reflect it)
+  const judgeOne = async (c: ContextAnomaly) => {
     const k = ckey(c);
     setVerdicts((v) => ({ ...v, [k]: "loading" }));
     try {
@@ -32,6 +35,26 @@ export function ContextAnomalyView() {
       setVerdicts((v) => ({ ...v, [k]: data }));
     } catch {
       setVerdicts((v) => ({ ...v, [k]: { verdict: "context_anomaly", confidence: "low", rationale: `${c.msg} (호출 실패 — 사람 검토)` } }));
+    }
+  };
+  const judge = (c: ContextAnomaly) => void judgeOne(c);
+
+  // batch judge the displayed candidates with a tiny bounded-concurrency pool (≤5 in flight)
+  const judgeAll = async (list: ContextAnomaly[]) => {
+    if (batchRunning) return;
+    setBatchRunning(true);
+    try {
+      const LIMIT = 5;
+      let next = 0;
+      const worker = async () => {
+        while (next < list.length) {
+          const c = list[next++];
+          await judgeOne(c);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(LIMIT, list.length) }, () => worker()));
+    } finally {
+      setBatchRunning(false);
     }
   };
 
@@ -51,6 +74,29 @@ export function ContextAnomalyView() {
   });
   const shown = ranked.slice(0, 24);
 
+  // ── scoreboard metrics (driven by the shared `verdicts` map) ──
+  const aiConfirmed = shown.filter((c) => {
+    const v = verdicts[ckey(c)];
+    return v && v !== "loading" && v.verdict === "context_anomaly";
+  });
+  const aiConfirmedCount = aiConfirmed.length;
+  // precision = AI확정 중 정답지 매칭 비율
+  const aiConfirmedKeyHits = aiConfirmed.filter((c) => keySet.has(`${c.patient_id}:${c.fam}`)).length;
+  const precision = aiConfirmedCount > 0 ? aiConfirmedKeyHits / aiConfirmedCount : 0;
+  // 정답지(patient:fam) 집합 — recall(AI확정) 계산용
+  const answerFamSet = recall ? new Set(recall.detail.map((d) => `${d.patient_id}:${famOfSignal(d.signal)}`)) : new Set<string>();
+  const aiConfirmedFamSet = new Set(aiConfirmed.map((c) => `${c.patient_id}:${c.fam}`));
+  const recallAiHits = [...answerFamSet].filter((k) => aiConfirmedFamSet.has(k)).length;
+  const recallTotal = recall ? recall.total : 0;
+  const recallDeterministic = recallTotal > 0 ? recall!.recall / recallTotal : 0;
+  const recallAi = recallTotal > 0 ? recallAiHits / recallTotal : 0;
+  const anyVerdict = shown.some((c) => {
+    const v = verdicts[ckey(c)];
+    return v && v !== "loading";
+  });
+  const pct = (n: number) => `${Math.round(n * 100)}%`;
+  const hasKey = keySet.size > 0;
+
   return (
     <div className="flex flex-col gap-4">
       {/* summary / recall */}
@@ -60,12 +106,49 @@ export function ContextAnomalyView() {
           <p className="text-sm font-semibold text-ink">맥락 조건부 개인화 이상탐지 <span className="text-dim">· 다중조건</span></p>
           <p className="mt-0.5 text-[11px] leading-relaxed text-dim">전역 범위·단순 통계는 <b className="text-ink">통과</b>하나 환자 본인의 맥락(음주·카페인·운동·스트레스)·추세 대비 어긋난 값을 결정적 필터로 surfacing → AI 에이전트가 맥락 추론으로 판정.</p>
         </div>
-        {recall && (
-          <span className="ml-auto inline-flex items-center gap-1.5 rounded-pill bg-[#f3f7e0] px-2.5 py-1 text-[11px] font-medium text-[#4d6a0f]">
-            <ShieldCheck className="size-3.5" /> 정답지 검증 {recall.recall}/{recall.total} · 후보 {candidates.length}건
-          </span>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {recall && (
+            <span className="inline-flex items-center gap-1.5 rounded-pill bg-[#f3f7e0] px-2.5 py-1 text-[11px] font-medium text-[#4d6a0f]">
+              <ShieldCheck className="size-3.5" /> 정답지 검증 {recall.recall}/{recall.total} · 후보 {candidates.length}건
+            </span>
+          )}
+          <Button size="sm" variant="outline" disabled={batchRunning} onClick={() => judgeAll(shown)}>
+            {batchRunning ? <Loader2 className="size-3.5 animate-spin" /> : <Brain className="size-3.5" />} 전체 AI 판정
+          </Button>
+        </div>
       </div>
+
+      {/* precision / recall scoreboard (batch AI judgment) */}
+      {(anyVerdict || batchRunning) && (
+        <div className="overflow-hidden rounded-2xl border border-[#eeeef4] bg-surface">
+          <div className="flex items-center gap-2 border-b border-[#eeeef4] bg-canvas px-4 py-2.5">
+            <Gauge className="size-4 text-brand" />
+            <span className="text-sm font-semibold text-ink">정밀도·재현율 스코어보드</span>
+            {batchRunning && <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-dim"><Loader2 className="size-3 animate-spin" /> 배치 판정 중…</span>}
+          </div>
+          <div className="grid grid-cols-2 gap-px bg-[#f1f1f5] sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              { label: "결정적 후보 전체", value: `${candidates.length}`, sub: "룰 필터 통과" },
+              { label: "표시 후보", value: `${shown.length}`, sub: "상위 노출" },
+              { label: "AI 확정", value: `${aiConfirmedCount}`, sub: "맥락 이상 판정" },
+              { label: "precision", value: pct(precision), sub: `${aiConfirmedKeyHits}/${aiConfirmedCount} 정답지 매칭` },
+              { label: "recall (결정적)", value: pct(recallDeterministic), sub: `${recall ? recall.recall : 0}/${recallTotal}` },
+              { label: "recall (AI 확정)", value: pct(recallAi), sub: `${recallAiHits}/${recallTotal}` },
+            ].map((m) => (
+              <div key={m.label} className="bg-surface px-4 py-3">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-icon">{m.label}</p>
+                <p className="mt-0.5 text-lg font-semibold tabular-nums text-ink">{m.value}</p>
+                <p className="text-[10px] leading-tight text-dim">{m.sub}</p>
+              </div>
+            ))}
+          </div>
+          <p className="border-t border-[#eeeef4] bg-canvas px-4 py-2 text-[11px] leading-relaxed text-dim">
+            {hasKey
+              ? <>prod(키 있음) = AI 가지치기로 오탐 제거 → <b className="text-ink">precision ↑</b></>
+              : <>dev(키 없음) = 룰 폴백이라 전부 확정 → <b className="text-ink">precision 낮음</b></>}
+          </p>
+        </div>
+      )}
 
       {/* answer-key recall detail */}
       {recall && (
